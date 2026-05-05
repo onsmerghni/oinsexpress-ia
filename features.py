@@ -1,98 +1,141 @@
 """
-OINSExpress — Feature Engineering pour XGBoost
-================================================
-Maintient un buffer glissant de 5 lectures IMU par livreur.
-Calcule 34 features statistiques pour la classification.
+features.py — OINSExpress Feature Extractor (temps réel)
+=========================================================
+Reproduit EXACTEMENT le pipeline de 02_preprocess.py :
+  - window=10 rolling stats pour 8 signaux de base
+  - Features dérivées : AccMag, GyroMag, Jerk*, énergie, ratio
+  - BrakeIntensity, TurnIntensity, AccelIntensity
+
+Résultat : 58 features dans le même ordre que feature_cols.json
+
+PFA 2026 — Mrabet Islem & Merghni Ons
 """
 
+from collections import deque
 import numpy as np
-from collections import defaultdict, deque
 
-WINDOW_SIZE = 5  # 5 lectures × 2s = 10 secondes de contexte
-SENSORS = ['accX', 'accY', 'accZ', 'gyrX', 'gyrY', 'gyrZ']
-
-# Limites physiques pour filtrer les valeurs aberrantes
-CLIP_ACC = 5.0    # ±5g max
-CLIP_GYR = 500.0  # ±500°/s max
+WINDOW = 10   # doit correspondre au paramètre d'entraînement
 
 
 class FeatureExtractor:
-    """Extrait les features XGBoost depuis un buffer glissant par livreur."""
+    """
+    Maintient un buffer glissant par livreur.
+    Chaque appel à add_reading() + get_features() produit
+    le vecteur de 58 features prêt pour le modèle.
+    """
 
-    def __init__(self):
-        self.buffers = defaultdict(lambda: deque(maxlen=WINDOW_SIZE))
+    def __init__(self, window: int = WINDOW):
+        self.window = window
+        self._buffers: dict = {}
 
-    def add_reading(self, livreur_id: str, raw_imu: dict):
-        """Ajoute une lecture IMU au buffer du livreur."""
-        reading = [
-            float(np.clip(raw_imu.get('accX', 0.0), -CLIP_ACC, CLIP_ACC)),
-            float(np.clip(raw_imu.get('accY', 0.0), -CLIP_ACC, CLIP_ACC)),
-            float(np.clip(raw_imu.get('accZ', 1.0), -CLIP_ACC, CLIP_ACC)),
-            float(np.clip(raw_imu.get('gyrX', 0.0), -CLIP_GYR, CLIP_GYR)),
-            float(np.clip(raw_imu.get('gyrY', 0.0), -CLIP_GYR, CLIP_GYR)),
-            float(np.clip(raw_imu.get('gyrZ', 0.0), -CLIP_GYR, CLIP_GYR)),
-        ]
-        self.buffers[livreur_id].append(reading)
+    # ──────────────────────────────────────────────────────────
+    # API publique
+    # ──────────────────────────────────────────────────────────
 
-    def get_features(self, livreur_id: str) -> list:
+    def add_reading(self, livreur_id: str, reading: dict) -> None:
         """
-        Retourne le vecteur de 34 features pour le livreur.
-        Si le buffer est vide → vecteur nul (NORMAL par défaut).
+        Ajoute une lecture IMU au buffer du livreur.
+        Accepte les deux conventions de nommage :
+          - accX / accY / accZ / gyrX / gyrY / gyrZ  (ESP32 / Spring Boot)
+          - AccX / AccY / AccZ / GyroX / GyroY / GyroZ (dataset original)
         """
-        buf = list(self.buffers[livreur_id])
+        if livreur_id not in self._buffers:
+            self._buffers[livreur_id] = deque(maxlen=self.window)
+
+        r = {
+            'AccX':  float(reading.get('accX',  reading.get('AccX',  0.0))),
+            'AccY':  float(reading.get('accY',  reading.get('AccY',  0.0))),
+            'AccZ':  float(reading.get('accZ',  reading.get('AccZ',  0.0))),
+            'GyroX': float(reading.get('gyrX',  reading.get('GyroX', 0.0))),
+            'GyroY': float(reading.get('gyrY',  reading.get('GyroY', 0.0))),
+            'GyroZ': float(reading.get('gyrZ',  reading.get('GyroZ', 0.0))),
+        }
+        self._buffers[livreur_id].append(r)
+
+    def get_features(self, livreur_id: str) -> dict:
+        """
+        Retourne un dict {feature_name: value} avec 58 features.
+        Retourne {} si le buffer est vide.
+        """
+        buf = list(self._buffers.get(livreur_id, []))
         if not buf:
-            return [0.0] * 34
+            return {}
+        return self._compute(buf)
 
-        # Remplir le buffer avec la dernière valeur si < WINDOW_SIZE
-        while len(buf) < WINDOW_SIZE:
-            buf.insert(0, buf[0])
+    def buffer_size(self, livreur_id: str) -> int:
+        return len(self._buffers.get(livreur_id, []))
 
-        arr = np.array(buf, dtype=np.float32)  # shape: (5, 6)
+    # ──────────────────────────────────────────────────────────
+    # Calcul des features (miroir exact de 02_preprocess.py)
+    # ──────────────────────────────────────────────────────────
 
-        features = []
+    def _compute(self, buf: list) -> dict:
+        n = len(buf)
 
-        # ── 24 features statistiques (4 stats × 6 capteurs) ──
-        for i in range(6):
-            col = arr[:, i]
-            abs_col = np.abs(col)
-            features.append(float(np.mean(col)))         # moyenne
-            features.append(float(np.std(col)))          # écart-type
-            features.append(float(np.max(abs_col)))      # max absolu (pic)
-            features.append(float(np.mean(abs_col)))     # moyenne absolue
+        accX  = np.array([r['AccX']  for r in buf])
+        accY  = np.array([r['AccY']  for r in buf])
+        accZ  = np.array([r['AccZ']  for r in buf])
+        gyrX  = np.array([r['GyroX'] for r in buf])
+        gyrY  = np.array([r['GyroY'] for r in buf])
+        gyrZ  = np.array([r['GyroZ'] for r in buf])
 
-        # ── 10 features dérivées ──
-        acc = arr[:, :3]   # accX, accY, accZ
-        gyr = arr[:, 3:]   # gyrX, gyrY, gyrZ
+        # ── Magnitudes & énergie ──
+        accMag       = np.sqrt(accX**2 + accY**2 + accZ**2)
+        gyroMag      = np.sqrt(gyrX**2 + gyrY**2 + gyrZ**2)
+        accEnergy    = accMag  ** 2
+        gyroEnergy   = gyroMag ** 2
+        gyroAccRatio = gyroMag / (accMag + 1e-6)
 
-        acc_mag = np.sqrt(np.sum(acc ** 2, axis=1))  # norme accélération
-        gyr_mag = np.sqrt(np.sum(gyr ** 2, axis=1))  # norme gyroscope
+        # ── Jerk (différence finie sur le dernier point) ──
+        jerkX   = float(accX[-1] - accX[-2]) if n >= 2 else 0.0
+        jerkY   = float(accY[-1] - accY[-2]) if n >= 2 else 0.0
+        jerkZ   = float(accZ[-1] - accZ[-2]) if n >= 2 else 0.0
+        jerkMag = float(np.sqrt(jerkX**2 + jerkY**2 + jerkZ**2))
 
-        features.append(float(np.mean(acc_mag)))          # norme acc moyenne
-        features.append(float(np.max(acc_mag)))           # norme acc pic
-        features.append(float(np.mean(gyr_mag)))          # norme gyr moyenne
-        features.append(float(np.max(gyr_mag)))           # norme gyr pic
-        features.append(float(np.mean(np.abs(arr[:, 1])))) # |accY| moy (latéral)
-        features.append(float(np.max(np.abs(arr[:, 1]))))  # |accY| max (latéral)
-        features.append(float(np.mean(np.abs(arr[:, 5])))) # |gyrZ| moy (lacet)
-        features.append(float(np.max(np.abs(arr[:, 5]))))  # |gyrZ| max (lacet)
-        features.append(float(np.std(acc_mag)))            # variabilité acc
-        features.append(float(np.std(gyr_mag)))            # variabilité gyr
+        feat = {
+            # Valeurs instantanées (dernier point)
+            'GyroX':        float(gyrX[-1]),
+            'GyroY':        float(gyrY[-1]),
+            'GyroZ':        float(gyrZ[-1]),
+            'AccX':         float(accX[-1]),
+            'AccY':         float(accY[-1]),
+            'AccZ':         float(accZ[-1]),
+            # Dérivées scalaires
+            'AccMag':       float(accMag[-1]),
+            'GyroMag':      float(gyroMag[-1]),
+            'AccEnergy':    float(accEnergy[-1]),
+            'GyroEnergy':   float(gyroEnergy[-1]),
+            'GyroAccRatio': float(gyroAccRatio[-1]),
+            # Jerk
+            'JerkX':   jerkX,
+            'JerkY':   jerkY,
+            'JerkZ':   jerkZ,
+            'JerkMag': jerkMag,
+        }
 
-        return features  # 34 features au total
+        # ── Rolling stats (même ordre que cols_base dans 02_preprocess.py) ──
+        signals = {
+            'AccX':    accX,
+            'AccY':    accY,
+            'AccZ':    accZ,
+            'GyroX':   gyrX,
+            'GyroY':   gyrY,
+            'GyroZ':   gyrZ,
+            'AccMag':  accMag,
+            'GyroMag': gyroMag,
+        }
+        for cname, arr in signals.items():
+            # pandas rolling().std() utilise ddof=1 par défaut
+            std_val = float(np.std(arr, ddof=1)) if n > 1 else 0.0
+            feat[f'{cname}_roll_mean']  = float(np.mean(arr))
+            feat[f'{cname}_roll_std']   = std_val
+            feat[f'{cname}_roll_max']   = float(np.max(arr))
+            feat[f'{cname}_roll_min']   = float(np.min(arr))
+            feat[f'{cname}_roll_range'] = float(np.max(arr) - np.min(arr))
 
+        # ── Features dérivées du rolling ──
+        feat['BrakeIntensity'] = -feat['AccX_roll_min']
+        feat['TurnIntensity']  =  feat['GyroZ_roll_range']
+        feat['AccelIntensity'] =  feat['AccX_roll_max']
 
-def get_feature_names() -> list:
-    """Retourne les noms des 34 features (pour logs/debug)."""
-    names = []
-    stats = ['mean', 'std', 'max_abs', 'mean_abs']
-    for sensor in SENSORS:
-        for stat in stats:
-            names.append(f"{sensor}_{stat}")
-    names += [
-        'acc_mag_mean', 'acc_mag_max',
-        'gyr_mag_mean', 'gyr_mag_max',
-        'accY_abs_mean', 'accY_abs_max',
-        'gyrZ_abs_mean', 'gyrZ_abs_max',
-        'acc_mag_std', 'gyr_mag_std',
-    ]
-    return names
+        return feat
