@@ -11,8 +11,6 @@ Lancé automatiquement lors du build Render.
 import numpy as np
 import pickle
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
 from features import FeatureExtractor
 
 np.random.seed(42)
@@ -71,10 +69,20 @@ def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
     print(f"[DATA] NORMAL={len(y_normal)}  RISKY={len(y_risky)}  AGGRESSIVE={len(y_aggr)}")
     print(f"[DATA] Features : {X.shape[1]}")
 
-    # ── Split train/test ──
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # ── Split train/test (stratifié, sans sklearn) ──
+    rng = np.random.default_rng(42)
+    indices = np.arange(len(y))
+    train_idx, test_idx = [], []
+    for cls in np.unique(y):
+        cls_idx = indices[y == cls]
+        rng.shuffle(cls_idx)
+        n_test = max(1, int(len(cls_idx) * 0.2))
+        test_idx.extend(cls_idx[:n_test].tolist())
+        train_idx.extend(cls_idx[n_test:].tolist())
+    train_idx = np.array(train_idx)
+    test_idx  = np.array(test_idx)
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
 
     # ── Modèle XGBoost ──
     model = XGBClassifier(
@@ -83,7 +91,6 @@ def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
         learning_rate=0.1,
         subsample=0.8,
         colsample_bytree=0.8,
-        use_label_encoder=False,
         eval_metric='mlogloss',
         random_state=42,
         n_jobs=-1,
@@ -91,15 +98,19 @@ def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
 
     model.fit(X_train, y_train)
 
-    # ── Évaluation ──
+    # ── Évaluation (sans sklearn) ──
     y_pred = model.predict(X_test)
-    print("\n[RÉSULTATS]")
-    print(classification_report(
-        y_test, y_pred,
-        target_names=['NORMAL', 'RISKY', 'AGGRESSIVE']
-    ))
-
     acc = (y_pred == y_test).mean()
+    print("\n[RÉSULTATS]")
+    class_names = ['NORMAL', 'RISKY', 'AGGRESSIVE']
+    for i, name in enumerate(class_names):
+        tp = ((y_pred == i) & (y_test == i)).sum()
+        fp = ((y_pred == i) & (y_test != i)).sum()
+        fn = ((y_pred != i) & (y_test == i)).sum()
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+        print(f"  {name:12s}  precision={prec:.2f}  recall={rec:.2f}  f1={f1:.2f}  support={(y_test==i).sum()}")
     print(f"[OK] Accuracy test : {acc:.1%}")
 
     # ── Sauvegarde ──
