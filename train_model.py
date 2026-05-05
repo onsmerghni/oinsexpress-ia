@@ -10,7 +10,7 @@ Lancé automatiquement lors du build Render.
 
 import numpy as np
 import pickle
-from xgboost import XGBClassifier
+import xgboost as xgb
 from features import FeatureExtractor
 
 np.random.seed(42)
@@ -45,7 +45,7 @@ def simulate_window(acc_scale: float, gyr_scale: float, n: int) -> np.ndarray:
     return np.array(result)
 
 
-def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
+def train_and_save(model_path: str = 'model.pkl') -> xgb.Booster:
     print("═" * 50)
     print("  OINSExpress — Entraînement XGBoost")
     print("═" * 50)
@@ -84,22 +84,27 @@ def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
 
-    # ── Modèle XGBoost ──
-    model = XGBClassifier(
-        n_estimators=150,
-        max_depth=5,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric='mlogloss',
-        random_state=42,
-        n_jobs=-1,
-    )
+    # ── Modèle XGBoost (API native, sans sklearn) ──
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dtest  = xgb.DMatrix(X_test,  label=y_test)
 
-    model.fit(X_train, y_train)
+    params = {
+        'max_depth':        5,
+        'eta':              0.1,
+        'subsample':        0.8,
+        'colsample_bytree': 0.8,
+        'objective':        'multi:softprob',
+        'num_class':        3,
+        'eval_metric':      'mlogloss',
+        'seed':             42,
+        'nthread':          4,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=150,
+                        verbose_eval=False)
 
     # ── Évaluation (sans sklearn) ──
-    y_pred = model.predict(X_test)
+    proba_matrix = booster.predict(dtest).reshape(-1, 3)
+    y_pred = proba_matrix.argmax(axis=1).astype(int)
     acc = (y_pred == y_test).mean()
     print("\n[RÉSULTATS]")
     class_names = ['NORMAL', 'RISKY', 'AGGRESSIVE']
@@ -115,11 +120,11 @@ def train_and_save(model_path: str = 'model.pkl') -> XGBClassifier:
 
     # ── Sauvegarde ──
     with open(model_path, 'wb') as f:
-        pickle.dump(model, f)
+        pickle.dump(booster, f)
     print(f"[OK] Modèle sauvegardé → {model_path}")
     print("═" * 50)
 
-    return model
+    return booster
 
 
 if __name__ == '__main__':

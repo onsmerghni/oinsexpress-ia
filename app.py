@@ -28,6 +28,8 @@ Format réponse :
 import os
 import pickle
 import logging
+import numpy as np
+import xgboost as xgb
 from flask import Flask, request, jsonify
 from features import FeatureExtractor
 
@@ -95,9 +97,10 @@ def predict():
     # Extraire les features
     features = extractor.get_features(livreur_id)
 
-    # Prédiction XGBoost
-    proba_arr = model.predict_proba([features])[0]
-    pred_idx  = int(proba_arr.argmax())
+    # Prédiction XGBoost (API native)
+    dmatrix   = xgb.DMatrix(np.array([features]))
+    proba_arr = model.predict(dmatrix)[0]          # shape (3,) avec multi:softprob
+    pred_idx  = int(np.argmax(proba_arr))
     state     = STATES[pred_idx]
     proba     = float(proba_arr[pred_idx])
 
