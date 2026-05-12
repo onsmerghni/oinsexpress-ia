@@ -83,7 +83,7 @@ def load_artifacts():
 booster, FEATURE_COLS, SCALER_MEAN, SCALER_SCALE, \
     SEUIL_WARNING, SEUIL_CRITICAL, IDX_AGGR = load_artifacts()
 
-extractor = FeatureExtractor(window=10)
+extractor = FeatureExtractor(window=20)
 
 
 # ══════════════════════════════════════════════════════
