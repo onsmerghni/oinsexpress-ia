@@ -1,0 +1,83 @@
+{
+  "model_info": {
+    "type": "XGBoost Classifier (binaire)",
+    "objective": "binary:logistic",
+    "n_features": 58,
+    "classes": [
+      "AGGRESSIVE",
+      "NORMAL"
+    ],
+    "model_file": "models/xgb_driver_behavior.pkl",
+    "scaler_file": "models/scaler.pkl",
+    "label_encoder_file": "models/label_encoder.pkl",
+    "feature_cols_file": "models/feature_cols.pkl",
+    "thresholds_file": "models/alert_thresholds.pkl"
+  },
+  "dataset_info": {
+    "n_train": 152,
+    "n_test": 30,
+    "class_distribution_test": {
+      "AGGRESSIVE": 15,
+      "NORMAL": 15
+    }
+  },
+  "metrics": {
+    "test_accuracy": 0.9,
+    "test_f1_macro": 0.899888765294772,
+    "test_f1_weighted": 0.899888765294772,
+    "test_precision_macro": 0.9017857142857143,
+    "test_recall_macro": 0.9,
+    "test_auc": 0.9688888888888889,
+    "test_avg_precision": 0.9749999999999999,
+    "train_accuracy": 0.9078947368421053,
+    "gap_train_test": 0.007894736842105288,
+    "per_class": {
+      "AGGRESSIVE": {
+        "precision": 0.9285714285714286,
+        "recall": 0.8666666666666667,
+        "f1": 0.896551724137931
+      },
+      "NORMAL": {
+        "precision": 0.875,
+        "recall": 0.9333333333333333,
+        "f1": 0.9032258064516129
+      }
+    },
+    "confusion_matrix": [
+      [
+        13,
+        2
+      ],
+      [
+        1,
+        14
+      ]
+    ]
+  },
+  "alert_thresholds": {
+    "warning": 0.5,
+    "critical": 0.8494858741760254,
+    "test_alerts": {
+      "n_warning": 14,
+      "n_critical": 11,
+      "tp_warning": 13,
+      "fp_warning": 1,
+      "tp_critical": 11,
+      "fp_critical": 0,
+      "precision_warning": 0.9285714285714286,
+      "precision_critical": 1.0
+    }
+  },
+  "errors": {
+    "total": 3,
+    "false_positives": 1,
+    "false_negatives": 2
+  },
+  "deployment": {
+    "service": "Flask (oinsexpress_ia/flask_service/anomaly_detector.py)",
+    "endpoint_predict": "POST /predict",
+    "endpoint_health": "GET /health",
+    "real_time": true
+  },
+  "production_ready": true
+}

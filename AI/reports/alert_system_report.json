@@ -1,0 +1,9 @@
+{
+  "thresholds": {
+    "WARNING": 0.5,
+    "CRITICAL": 0.8494858741760254
+  },
+  "false_alarm_rate": 0.06666666666666667,
+  "warning_detection_on_class3": 0.9,
+  "critical_detection_on_class4": 0.4
+}
